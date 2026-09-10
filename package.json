@@ -1,0 +1,52 @@
+{
+  "name": "@jzhuo3/oidc-client-emulator",
+  "version": "0.1.0",
+  "description": "Acquire OIDC authorization codes and temporarily forward macOS custom URL schemes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "oidc-client-emulator": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "native/URLHelper.swift",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node ./node_modules/typescript/bin/tsc",
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:macos": "npm run build && node scripts/test-macos.mjs",
+    "test:package": "npm run build && node scripts/test-package.mjs",
+    "test:live": "npm run build && node --env-file=.env scripts/verify-live.mjs",
+    "check:native": "node scripts/check-native.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run test:package",
+    "prepack": "npm run build"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maczhuo/oidc-client-emulator.git"
+  },
+  "homepage": "https://github.com/maczhuo/oidc-client-emulator#readme",
+  "bugs": {
+    "url": "https://github.com/maczhuo/oidc-client-emulator/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "jose": "^6.2.12",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,86 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Validate release metadata and record exact commit
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const manifest = JSON.parse(readFileSync('.release-please-manifest.json', 'utf8'));
+          const tag = process.env.RELEASE_TAG;
+          const repository = process.env.GITHUB_REPOSITORY;
+          if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag ?? '') || tag !== `v${pkg.version}`) {
+            throw new Error('Release tag must be vX.Y.Z and match package.json.');
+          }
+          if (manifest['.'] !== pkg.version) throw new Error('Release manifest version must match package.json.');
+          if (pkg.name !== '@jzhuo3/oidc-client-emulator' || pkg.private) throw new Error('Unexpected package name or private package.');
+          if (!pkg.license || pkg.license === 'UNLICENSED') throw new Error('Choose and document the distribution license before publishing.');
+          if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? '')) throw new Error('Missing GitHub repository identity.');
+          const expected = `https://github.com/${repository}`;
+          const actual = pkg.repository?.url?.replace(/^git\+/, '').replace(/\.git$/, '');
+          if (actual !== expected) throw new Error('package.json repository.url must match the publishing GitHub repository.');
+          if (pkg.publishConfig?.access !== 'public' || pkg.publishConfig?.registry !== 'https://registry.npmjs.org') {
+            throw new Error('Expected public npmjs.org publishConfig.');
+          }
+          console.log('Release metadata validated.');
+          NODE
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.validate.outputs.commit }}
+
+  publish:
+    needs: [validate, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11
+      - run: npm ci
+      - name: Publish using npm OIDC
+        run: npm publish --access public

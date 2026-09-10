@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+!.env.sample
+.prototype/
+node_modules/
+dist/
+*.tgz
