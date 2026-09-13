@@ -4,8 +4,8 @@ A Node.js CLI and module for acquiring **OIDC authorization codes**, with a macO
 helper that forwards custom URL schemes such as `com.example.app://callback` to a
 local HTTP receiver.
 
-This version supports `response_type=code`, query responses, state, and PKCE S256.
-It returns the code and PKCE verifier. It does not exchange codes, validate ID
+This version supports `response_type=code`, query responses, state, and optional PKCE S256 (enabled by default).
+It returns the code and, when PKCE is enabled, the PKCE verifier. It does not exchange codes, validate ID
 tokens, or claim that the user has been authenticated.
 
 Validated issuer discovery metadata is cached in memory for 300 seconds across
@@ -24,14 +24,14 @@ flowchart TD
 
     subgraph Tool["Node.js package"]
         Core["Authorization core<br/>Validate options and acquire scheme lock"]
-        Request["Build authorization URL<br/>Generate state, nonce, and PKCE S256"]
+        Request["Build authorization URL<br/>Generate state, nonce, and optional PKCE S256"]
         Listen["Start HTTP callback receiver<br/>Bind loopback host and allocate port"]
         Manager["macOS integration<br/>Save previous handler and configure helper"]
         Receive["HTTP callback receiver<br/>Authenticate POST and validate URL,<br/>state, issuer, and response parameters"]
         Valid{"Valid response?"}
         Wait["Reject invalid request<br/>Keep waiting for a valid callback"]
         Cleanup["Cleanup<br/>Close receiver, restore owned handler,<br/>and release scheme lock"]
-        Result["Return code and PKCE verifier<br/>or reject with an error"]
+        Result["Return code and optional PKCE verifier<br/>or reject with an error"]
         Stop["Timeout, cancellation,<br/>or operational failure"]
     end
 
@@ -70,7 +70,7 @@ purposes. The provider redirects to `com.example.app://callback`; the helper
 forwards that URL to `http://127.0.0.1:<port>/callback`. Port `0` asks the OS to
 choose an available port, and managed mode passes that actual port to the helper.
 The forwarding bearer token authenticates the local POST; `state` ties the OIDC
-response to the pending request. The PKCE verifier stays in Node.js and is returned
+response to the pending request. When enabled, the PKCE verifier stays in Node.js and is returned
 with the code for a later token exchange.
 
 | Mode | Who configures forwarding? | What happens after authorization? |
@@ -91,8 +91,7 @@ be retried with `intercept off` as described below.
 - macOS 12 or later and a logged-in desktop session for custom scheme handling.
 - Xcode Command Line Tools (`xcode-select --install`), or Xcode. The Swift helper
   is compiled and ad-hoc signed on first use. Nothing runs at npm install time.
-- A pre-registered OIDC client with the **exact** custom redirect URI and S256
-  support. Include `openid` in scopes. No client secret is needed to acquire a code.
+- A pre-registered OIDC client with the **exact** custom redirect URI. S256 support is required only when enabling PKCE. Include `openid` in scopes. No client secret is needed to acquire a code.
 
 The native prototype and integration suite were tested on macOS 26.6.2. Older
 macOS versions and Intel hardware remain unverified. This source-built release
@@ -135,7 +134,7 @@ At startup, the daemon generates a random token and displays an
 `Authorization: Bearer <token>` header in the terminal (stderr). Copy the token
 to a Postman variable (`bridgeToken`) or copy the whole header into your HTTP
 client. A new token is generated on each restart. Optionally set
-`OIDC_DAEMON_TOKEN` to use a fixed token; supplied tokens are not printed. The daemon requires `Authorization: Bearer <token>` on every endpoint,
+`OIDC_DAEMON_TOKEN` to use a fixed token; supplied tokens are not printed. By default, the daemon requires `Authorization: Bearer <token>` on every endpoint,
 including health checks. Supplied tokens must contain 32–256 base64url characters. The HTTP server binds only to `127.0.0.1` or `::1`; no
 Cloudflare setup is involved. Browser-origin requests are rejected and CORS is
 not enabled. Use Postman Desktop or another HTTP client.
@@ -165,7 +164,7 @@ curl --request POST http://127.0.0.1:43187/login \
 ```
 
 Required fields are `issuer`, `clientId`, and `redirectUri`. Optional fields are
-`discoveryUrl`, `scopes` (default `["openid"]`), `timeoutMs` (1–300000, default
+`pkce` (boolean, default `true`), `discoveryUrl`, `scopes` (default `["openid"]`), `timeoutMs` (1–300000, default
 300000), and `authorizationParams` (string values, no protocol-field overrides).
 Provider URLs require HTTPS. Unknown fields are rejected. The daemon uses managed
 interception and an allocated callback port; `--state-dir` is a startup option.
@@ -192,7 +191,7 @@ curl http://127.0.0.1:43187/login/REPLACE_WITH_JOB_ID \
 
 Pending responses contain `status: "pending"` and `pollAfterMs: 1000`.
 Completed responses contain `status: "completed"` and `result`, with the same
-fields returned by module `authorize()` (including code, codeVerifier, and nonce).
+fields returned by module `authorize()` (including code and nonce, plus codeVerifier when PKCE is enabled).
 Failed responses contain `status: "failed"` and `error: { code, message }`, such as
 `TIMEOUT`, `CANCELLED`, or `AUTHORIZATION_DENIED`. Job failures are returned in an
 HTTP 200 polling response; clients must check `status` before using `result`.
@@ -209,7 +208,56 @@ finished job) and HTTP 404 for an unknown or expired job. Cancellation leaves th
 job pending until authorization cleanup finishes. SIGINT/SIGTERM shutdown aborts
 active authorization and waits for callback-handler restoration.
 
+## Cloudflare Access authentication
+
+To accept requests authenticated by Cloudflare Access, configure the daemon with
+both your team hostname and the Access application's Audience (AUD) tag:
+
+```sh
+oidc-client-emulator daemon \
+  --access-team-domain your-team.cloudflareaccess.com \
+  --access-audience YOUR_APPLICATION_AUD
+```
+
+Or use environment variables:
+
+```sh
+export OIDC_ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+export OIDC_ACCESS_AUDIENCE=YOUR_APPLICATION_AUD
+oidc-client-emulator daemon
+```
+
+CLI values override the corresponding environment variables. Supply the hostname
+without `https://` or a path. Missing or invalid configuration fails at startup.
+Without either option, authentication remains local-token-only.
+
+With Access configured, every endpoint accepts either the existing daemon bearer
+token or a verified `Cf-Access-Jwt-Assertion`. The daemon validates RS256 signatures,
+issuer, application audience, expiration, and any not-before claim; issued-at and
+expiration claims are required. Failed verification returns HTTP 401 without
+exposing the JWT or validation details. The existing browser-origin rejection
+still applies.
+
+The daemon fetches signing keys from
+`https://<team-domain>/cdn-cgi/access/certs`, caches them for up to 10 minutes, and
+refreshes for unknown key IDs subject to a 30-second cooldown. Key retrieval has a
+5-second timeout. No Cloudflare API token or private key is needed by the daemon.
+
+Configure Cloudflare Tunnel and an Access Service Auth policy separately. GitHub
+Actions sends its Cloudflare service-token credentials to Access; Access forwards
+the signed JWT to the daemon. The workflow does not need the generated local
+bearer token. Keep the Access policy scoped to the intended service identity.
+See [Cloudflare's JWT validation documentation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/).
+
 ## Acquire a code
+
+PKCE S256 is enabled by default. To disable it, pass `--no-pkce` to `authorize`,
+`"pkce": false` in a daemon `POST /login` body, or `pkce: false` to module
+`authorize()`. When disabled, no
+`code_challenge` or `code_challenge_method` is sent, and `codeVerifier` is omitted
+from the result. Enable PKCE when your provider/client registration requires it.
+State and nonce are generated and checked independently of this setting.
+
 
 ```sh
 oidc-client-emulator authorize \
@@ -228,13 +276,14 @@ the helper as the scheme handler, waits for a valid response, closes the receive
 and restores the previous application. A valid provider error rejects immediately.
 Invalid or unsolicited callbacks do not finish the pending attempt.
 
-The JSON result contains `code`, `codeVerifier`, `state`, `nonce`, `redirectUri`,
-`issuer`, optional `tokenEndpoint`, and `receivedAt`. Keep `codeVerifier` for a
+The JSON result contains `code`, `state`, `nonce`, `redirectUri`,
+`issuer`, optional `tokenEndpoint`, and `receivedAt`. With PKCE enabled, it also
+contains `codeVerifier`; keep that verifier for a
 downstream token request. Codes are single-use: a verification exchange consumes
 the code. Result JSON goes to stdout; diagnostics go to stderr without codes,
 verifiers, client secrets, or tokens. Treat captured stdout as sensitive.
 
-Example successful result (illustrative values only; not real credentials):
+Example successful result with PKCE enabled (illustrative values only; not real credentials):
 
 ```json
 {
@@ -250,7 +299,7 @@ Example successful result (illustrative values only; not real credentials):
 ```
 
 The CLI writes this object to stdout; the module's `authorize()` Promise resolves
-with the same shape. A downstream token exchange uses `code`, `codeVerifier`, and
+with the same shape. A downstream token exchange uses `code`, `codeVerifier` when present, and
 the exact `redirectUri`, together with the registered client ID and its required
 authentication. `state` correlates the callback with this request; `nonce` is
 available for later ID-token validation. `receivedAt` is the local receipt time,
@@ -269,6 +318,7 @@ Optional flags:
 | `--timeout-ms 300000` | Overall authorization deadline, independent of code TTL |
 | `--discovery-url URL` | Explicit discovery URL; the returned issuer must still match |
 | `--param prompt=login` | Extra authorization parameter; repeat as needed |
+| `--no-pkce` | Disable PKCE S256 (enabled by default) |
 | `--no-open` | Print the authorization URL to stderr for manual opening |
 | `--state-dir PATH` | Override the persistent helper/configuration directory |
 
@@ -287,6 +337,7 @@ const result = await authorize({
   clientId: 'registered-client',
   redirectUri: 'com.example.app://callback',
   scopes: ['openid', 'email'],
+  pkce: true, // Default: S256 enabled; set false to disable.
   callback: { host: '127.0.0.1', port: 0 },
   interception: 'managed',
   timeoutMs: 300_000,

@@ -10,6 +10,8 @@ export interface AuthorizationOptions {
   clientId: string;
   redirectUri: string;
   scopes?: string[];
+  /** Use PKCE S256 by default; set false to disable. */
+  pkce?: boolean;
   callback?: { host?: string; port?: number; token?: string };
   /** managed: temporary takeover; existing: persistent interception; none: external relay. */
   interception?: 'managed' | 'existing' | 'none';
@@ -25,7 +27,7 @@ export interface AuthorizationOptions {
 
 export interface AuthorizationResult {
   code: string;
-  codeVerifier: string;
+  codeVerifier?: string;
   state: string;
   nonce: string;
   redirectUri: string;
@@ -105,7 +107,6 @@ export async function discover(issuer: string, options: { discoveryUrl?: string;
   }
   if (metadata.response_types_supported && !metadata.response_types_supported.includes('code')) fail('UNSUPPORTED_PROVIDER', 'Provider does not advertise response_type=code.');
   if (metadata.response_modes_supported && !metadata.response_modes_supported.includes('query')) fail('UNSUPPORTED_PROVIDER', 'This version requires query authorization responses.');
-  if (metadata.code_challenge_methods_supported && !metadata.code_challenge_methods_supported.includes('S256')) fail('UNSUPPORTED_PROVIDER', 'Provider does not advertise PKCE S256; no downgrade is allowed.');
   if (metadata.require_pushed_authorization_requests) fail('UNSUPPORTED_PROVIDER', 'Required pushed authorization requests are not supported in this version.');
   options.signal?.throwIfAborted();
   if (discoveryCache.size >= discoveryCacheMaxEntries) discoveryCache.delete(discoveryCache.keys().next().value!);
@@ -139,9 +140,10 @@ export function parseResponse(raw: string, expected: { redirectUri: string; stat
   return code;
 }
 
-/** Acquire a code with state and PKCE; token exchange is deliberately left to the caller. */
+/** Acquire a code with state and optional PKCE; token exchange is deliberately left to the caller. */
 export async function authorize(options: AuthorizationOptions): Promise<AuthorizationResult> {
   if (typeof options.clientId !== 'string' || !options.clientId.trim()) fail('INVALID_OPTIONS', 'clientId is required.');
+  if (options.pkce !== undefined && typeof options.pkce !== 'boolean') fail('INVALID_OPTIONS', 'pkce must be a boolean.');
   const scopes = options.scopes ?? ['openid'];
   if (!Array.isArray(scopes) || !scopes.includes('openid') || scopes.some(scope => typeof scope !== 'string' || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) fail('INVALID_OPTIONS', 'Scopes must contain openid and consist of nonempty OAuth scope tokens.');
   let redirect: URL;
@@ -177,6 +179,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
   async function run(): Promise<AuthorizationResult> {
     signal.throwIfAborted();
     const provider = await discover(options.issuer, { ...options, signal });
+    if (options.pkce !== false && provider.code_challenge_methods_supported && !provider.code_challenge_methods_supported.includes('S256')) fail('UNSUPPORTED_PROVIDER', 'Provider does not advertise PKCE S256; no downgrade is allowed.');
     signal.throwIfAborted();
     let bindHost = host, bindPort = port, token = options.callback?.token ?? secret();
     if (mode === 'existing') {
@@ -186,13 +189,18 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
       if ((options.callback?.host !== undefined && host !== bindHost) || (options.callback?.port !== undefined && port !== bindPort) || (options.callback?.token !== undefined && token !== existing.token)) fail('INVALID_OPTIONS', 'Callback configuration must match the persistent interceptor.');
       token = existing.token;
     }
-    const state = secret(), codeVerifier = secret(), nonce = secret();
-    const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+    const state = secret(), codeVerifier = options.pkce !== false ? secret() : undefined, nonce = secret();
     const authURL = new URL(provider.authorization_endpoint);
     for (const [key, value] of Object.entries(options.authorizationParams ?? {})) authURL.searchParams.set(key, value);
     for (const [key, value] of Object.entries({ client_id: options.clientId, redirect_uri: options.redirectUri,
-      scope: [...new Set(scopes)].join(' '), response_type: 'code', response_mode: 'query', state, nonce,
-      code_challenge: codeChallenge, code_challenge_method: 'S256' })) authURL.searchParams.set(key, value);
+      scope: [...new Set(scopes)].join(' '), response_type: 'code', response_mode: 'query', state, nonce })) authURL.searchParams.set(key, value);
+    // Discovery endpoints may carry query parameters; disabled PKCE must omit both fields.
+    authURL.searchParams.delete('code_challenge');
+    authURL.searchParams.delete('code_challenge_method');
+    if (codeVerifier) {
+      authURL.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'));
+      authURL.searchParams.set('code_challenge_method', 'S256');
+    }
     const receiver = await listen<string>({ host: bindHost, port: bindPort, token, signal,
       parse: raw => parseResponse(raw, { redirectUri: options.redirectUri, state, issuer: options.issuer,
         requireIssuer: provider.authorization_response_iss_parameter_supported === true }) });
@@ -209,7 +217,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
       const opener = options.openBrowser;
       if (opener !== false) await Promise.race([Promise.resolve().then(() => opener ? opener(authURL.href) : openDefaultBrowser(authURL.href, signal)), interrupted]);
       const code = await receiver.result;
-      return { code, codeVerifier, state, nonce, redirectUri: options.redirectUri, issuer: options.issuer,
+      return { code, ...(codeVerifier ? { codeVerifier } : {}), state, nonce, redirectUri: options.redirectUri, issuer: options.issuer,
         tokenEndpoint: provider.token_endpoint, receivedAt: new Date().toISOString() };
     } finally {
       await receiver.close();

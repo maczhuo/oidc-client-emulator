@@ -4,17 +4,24 @@ import { equal, fail, loopback, validatePort, validateToken } from '../util.js';
 import { OIDCEmulatorError } from '../errors.js';
 import { LoginJobs } from './jobs.js';
 import { loginRoutes } from './routes.js';
+import { createAccessVerifier, type AccessOptions } from './access.js';
 
-export function createDaemonApp(token: string, jobs: LoginJobs) {
+export function createDaemonApp(token: string, jobs: LoginJobs, access?: AccessOptions) {
   validateToken(token);
+  const verifyAccess = access ? createAccessVerifier(access) : undefined;
   const app = express();
   app.disable('x-powered-by');
   app.disable('etag');
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (req.headers.origin !== undefined) { res.status(403).json({ error: { code: 'ORIGIN_REJECTED', message: 'Browser-origin requests are not supported.' } }); return; }
-    if (!equal(req.headers.authorization ?? '', `Bearer ${token}`)) {
-      res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: { code: 'UNAUTHORIZED', message: 'A valid daemon bearer token is required.' } }); return;
+    const localAuthenticated = equal(req.headers.authorization ?? '', `Bearer ${token}`);
+    const assertion = req.headers['cf-access-jwt-assertion'];
+    const accessAuthenticated = !localAuthenticated && verifyAccess && typeof assertion === 'string' && await verifyAccess(assertion);
+    if (!localAuthenticated && !accessAuthenticated) {
+      res.set('WWW-Authenticate', 'Bearer').status(401).json({ error: { code: 'UNAUTHORIZED', message: verifyAccess
+        ? 'A valid daemon bearer token or Cloudflare Access JWT is required.'
+        : 'A valid daemon bearer token is required.' } }); return;
     }
     next();
   });
@@ -34,12 +41,12 @@ export function createDaemonApp(token: string, jobs: LoginJobs) {
   return app;
 }
 
-export async function startDaemon(options: { token: string; host?: string; port?: number; stateDir?: string }) {
+export async function startDaemon(options: { token: string; host?: string; port?: number; stateDir?: string; access?: AccessOptions }) {
   const host = options.host ?? '127.0.0.1', port = options.port ?? 43187;
   if (!loopback(host)) fail('INVALID_OPTIONS', 'Daemon host must be 127.0.0.1 or ::1.');
   validatePort(port);
   const jobs = new LoginJobs(undefined, options.stateDir);
-  const server = createServer(createDaemonApp(options.token, jobs));
+  const server = createServer(createDaemonApp(options.token, jobs, options.access));
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => { server.off('error', reject); resolve(); });

@@ -31,7 +31,8 @@ try {
     signal: controller.signal, timeoutMs: 300_000,
   });
   const body = new URLSearchParams({ grant_type: 'authorization_code', code: result.code,
-    redirect_uri: result.redirectUri, code_verifier: result.codeVerifier });
+    redirect_uri: result.redirectUri });
+  if (result.codeVerifier) body.set('code_verifier', result.codeVerifier);
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
   if (method === 'client_secret_basic') {
     const encode = value => new URLSearchParams({ v: value }).toString().slice(2);
