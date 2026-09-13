@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.1...v0.1.2) (2026-09-13)
+
+
+### Features
+
+* **daemon:** add Cloudflare Access JWT auth and optional PKCE ([#3](https://github.com/maczhuo/oidc-client-emulator/issues/3)) ([2f089d3](https://github.com/maczhuo/oidc-client-emulator/commit/2f089d358370b4924712fa7fffe9b63a926d4583))
+
 ## [0.1.1](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.0...v0.1.1) (2026-09-13)
 
 
