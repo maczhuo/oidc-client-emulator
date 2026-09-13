@@ -10,7 +10,7 @@ const help = `oidc-client-emulator
     [--host 127.0.0.1] [--port 0] [--timeout-ms 300000]
     [--intercept managed|existing|none] [--no-open] [--json] [--no-pkce]
     [--discovery-url URL] [--param name=value] [--state-dir PATH]
-  daemon [--host 127.0.0.1] [--port 43187] [--state-dir PATH]
+  daemon [--host 127.0.0.1] [--port 43187] [--state-dir PATH] [--no-tui]
     [--access-team-domain TEAM.cloudflareaccess.com] [--access-audience AUD]
   intercept on --scheme SCHEME --port PORT [--host 127.0.0.1] [--state-dir PATH]
   intercept off --scheme SCHEME [--state-dir PATH]
@@ -30,7 +30,7 @@ authenticated POST /login, GET /login/:jobId, DELETE /login/:jobId, and GET /hea
 
 try {
   const { values, positionals } = parseArgs({ allowPositionals: true, strict: true, options: {
-    help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, 'no-pkce': { type: 'boolean' }, 'no-open': { type: 'boolean' },
+    help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, 'no-tui': { type: 'boolean' }, 'no-pkce': { type: 'boolean' }, 'no-open': { type: 'boolean' },
     issuer: { type: 'string' }, 'client-id': { type: 'string' }, 'redirect-uri': { type: 'string' },
     'discovery-url': { type: 'string' }, scope: { type: 'string', multiple: true }, scheme: { type: 'string' },
     'access-team-domain': { type: 'string' }, 'access-audience': { type: 'string' },
@@ -45,28 +45,40 @@ try {
   const numeric = (value: string | undefined, fallback: number) => value === undefined ? fallback : /^\d+$/.test(value) ? Number(value) : NaN;
   if (values.help || !positionals.length) { console.log(help); }
   else if (positionals[0] === 'daemon' && positionals.length === 1) {
-    if (Object.keys(values).some(key => !['host', 'port', 'state-dir', 'access-team-domain', 'access-audience'].includes(key))) {
-      throw new OIDCEmulatorError('INVALID_OPTIONS', 'Daemon options are --host, --port, --state-dir, --access-team-domain, and --access-audience; send OIDC parameters in POST /login.');
+    if (Object.keys(values).some(key => !['host', 'port', 'state-dir', 'no-tui', 'access-team-domain', 'access-audience'].includes(key))) {
+      throw new OIDCEmulatorError('INVALID_OPTIONS', 'Daemon options are --host, --port, --state-dir, --no-tui, --access-team-domain, and --access-audience; send OIDC parameters in POST /login.');
     }
     const access = accessOptions(values['access-team-domain'] ?? process.env.OIDC_ACCESS_TEAM_DOMAIN,
       values['access-audience'] ?? process.env.OIDC_ACCESS_AUDIENCE);
     const configuredToken = process.env.OIDC_DAEMON_TOKEN;
     const token = configuredToken || secret();
     const { startDaemon } = await import('./daemon/server.js');
-    const daemon = await startDaemon({ token, access, host: values.host, port: numeric(values.port, 43187), stateDir: values['state-dir'] });
-    await new Promise<void>((resolve, reject) => {
-      const stop = () => {
-        daemon.close().then(resolve, reject).finally(() => {
-          process.off('SIGINT', stop); process.off('SIGTERM', stop);
-        });
-      };
-      process.on('SIGINT', stop); process.on('SIGTERM', stop);
-      const address = daemon.server.address();
-      console.error(`OIDC daemon listening on http://${values.host === '::1' ? '[::1]' : '127.0.0.1'}:${typeof address === 'object' && address ? address.port : 43187}`);
-      if (access) console.error(`Cloudflare Access enabled for ${access.teamDomain}; audience ${JSON.stringify(access.audience)}. Local bearer tokens also accepted.`);
-      if (!configuredToken) console.error(`Authorization: Bearer ${token}`);
+    const interactive = !values['no-tui'] && process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY && process.env.TERM !== 'dumb';
+    const { DaemonTUI } = await import('./daemon/tui.js');
+    let tui: InstanceType<typeof DaemonTUI> | undefined;
+    const daemon = await startDaemon({ token, access, host: values.host, port: numeric(values.port, 43187), stateDir: values['state-dir'],
+      ui: interactive ? { event: event => tui?.event(event), waitForEnter: (id, signal) => tui!.waitForEnter(id, signal) } : undefined });
+    const address = daemon.server.address();
+    const url = `http://${values.host === '::1' ? '[::1]' : '127.0.0.1'}:${typeof address === 'object' && address ? address.port : 43187}`;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const stop = () => {
+          daemon.close().then(resolve, reject).finally(() => {
+            process.off('SIGINT', stop); process.off('SIGTERM', stop);
+          });
+        };
+        process.on('SIGINT', stop); process.on('SIGTERM', stop);
+        if (interactive) {
+          tui = new DaemonTUI(url, configuredToken ? undefined : token, daemon.cancelJob, stop, undefined, undefined, access);
+          tui.start();
+        } else {
+          console.error(`OIDC daemon listening on ${url}`);
+          if (access) console.error(`Cloudflare Access enabled for ${access.teamDomain}; audience ${JSON.stringify(access.audience)}. Local bearer tokens also accepted.`);
+          if (!configuredToken) console.error(`Authorization: Bearer ${token}`);
+        }
+      });
+    } finally { tui?.stop(); await daemon.close(); }
 
-    });
   }
   else if (positionals[0] === 'intercept' && positionals.length === 2) {
     const options = { scheme: required('scheme'), stateDir: values['state-dir'] };

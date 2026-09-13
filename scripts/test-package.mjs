@@ -12,7 +12,8 @@ const cache = join(root, '.prototype/npm-cache');
 const temp = await mkdtemp(join(tmpdir(), 'oidc-package-'));
 try {
   const { stdout } = await exec('npm', ['pack', '--ignore-scripts', '--json', '--cache', cache], { cwd: root });
-  const [packed] = JSON.parse(stdout);
+  const packOutput = JSON.parse(stdout);
+  const [packed] = Array.isArray(packOutput) ? packOutput : Object.values(packOutput);
   assert.ok(packed.files.some(file => file.path === 'native/URLHelper.swift'));
   assert.ok(packed.files.some(file => file.path === 'dist/index.d.ts'));
   assert.equal(packed.files.some(file => /(^|\/)(\.env|\.prototype|scripts|test)(\/|\.|$)/.test(file.path)), false);
