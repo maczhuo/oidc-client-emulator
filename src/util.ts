@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createInterface } from 'node:readline';
 import { OIDCEmulatorError } from './errors.js';
 
 const execute = promisify(execFile);
@@ -26,7 +27,23 @@ export async function command(file: string, args: string[]): Promise<string> {
   try { return (await execute(file, args, { timeout: 60_000, maxBuffer: 1024 * 1024 })).stdout; }
   catch { return fail('NATIVE_COMMAND_FAILED', `${file.split('/').at(-1)} failed. Check macOS consent and Xcode Command Line Tools; arguments are suppressed.`); }
 }
-export async function openDefaultBrowser(url: string): Promise<void> {
+export async function openDefaultBrowser(url: string, signal?: AbortSignal): Promise<void> {
   if (process.platform !== 'darwin') fail('UNSUPPORTED_PLATFORM', 'Default browser opening requires macOS; inject openBrowser on other platforms.');
+  signal?.throwIfAborted();
+  const input = createInterface({ input: process.stdin, output: process.stderr });
+  const cancel = () => input.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      input.once('line', () => resolve());
+      input.once('close', () => reject(signal?.reason ?? new OIDCEmulatorError('CANCELLED', 'Input closed before browser opening.')));
+      input.once('SIGINT', () => reject(new OIDCEmulatorError('CANCELLED', 'Authorization cancelled.')));
+      signal?.addEventListener('abort', cancel, { once: true });
+      process.stderr.write('Press Enter to open your default browser.');
+    });
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    input.close();
+  }
+  signal?.throwIfAborted();
   await command('/usr/bin/open', [url]);
 }

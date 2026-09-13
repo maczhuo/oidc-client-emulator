@@ -8,6 +8,11 @@ This version supports `response_type=code`, query responses, state, and PKCE S25
 It returns the code and PKCE verifier. It does not exchange codes, validate ID
 tokens, or claim that the user has been authenticated.
 
+Validated issuer discovery metadata is cached in memory for 300 seconds across
+all modes (CLI, daemon, and module). Entries are keyed by issuer, discovery URL,
+and HTTP policy. Cache hits do not extend expiry; failed discovery is not cached.
+The cache holds up to 100 entries and is discarded when the process exits.
+
 ## How the parts interact
 
 The flow below shows **managed mode**, where one call owns the listener and the
@@ -103,16 +108,104 @@ npm pack
 npm exec --package ./jzhuo3-oidc-client-emulator-0.1.0.tgz -- oidc-client-emulator --help
 ```
 
-The package has not been published. Once it is published, the executable is
-available as `npx @jzhuo3/oidc-client-emulator …`. It uses the [MIT License](LICENSE),
+For global CLI usage, install the local tarball:
+
+```sh
+npm install --global ./jzhuo3-oidc-client-emulator-0.1.0.tgz
+oidc-client-emulator --help
+```
+
+Once published, install with `npm install --global @jzhuo3/oidc-client-emulator`.
+Use `oidc-client-emulator authorize …` for a single login or
+`oidc-client-emulator daemon` for the HTTP bridge. Module imports keep the same API.
+The package uses the [MIT License](LICENSE),
 with copyright attributed to jzhuo3 (2026).
 See [PUBLISHING.md](PUBLISHING.md) for GitHub CI, release-please, and npm trusted
 publishing setup, including the first-release bootstrap.
 
+## Run the HTTP daemon
+
+Start it in an interactive terminal on the Mac where browser sign-in will happen:
+
+```sh
+export OIDC_DAEMON_TOKEN="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
+oidc-client-emulator daemon --host 127.0.0.1 --port 43187
+```
+
+Configure the same token as a Postman variable (`bridgeToken`) or in your HTTP
+client. The daemon requires `Authorization: Bearer <token>` on every endpoint,
+including health checks. It never prints the token. Tokens must contain 32–256
+base64url characters. The HTTP server binds only to `127.0.0.1` or `::1`; no
+Cloudflare setup is involved. Browser-origin requests are rejected and CORS is
+not enabled. Use Postman Desktop or another HTTP client.
+
+| Method | Endpoint | Behavior |
+| --- | --- | --- |
+| `GET` | `/health` | Returns `{ "status": "ok" }` |
+| `POST` | `/login` | Starts a login and returns HTTP 202 with a job ID |
+| `GET` | `/login/:jobId` | Polls pending, completed, or failed status |
+| `DELETE` | `/login/:jobId` | Requests cancellation; poll until cleanup completes |
+
+Start a login (the example assumes the token variable is available in this shell):
+
+```sh
+curl --request POST http://127.0.0.1:43187/login \
+  --header "Authorization: Bearer $OIDC_DAEMON_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "issuer": "https://identity.example.com",
+    "clientId": "registered-client",
+    "redirectUri": "com.example.app://callback",
+    "scopes": ["openid", "email", "profile"],
+    "timeoutMs": 300000,
+    "authorizationParams": { "prompt": "login" }
+  }'
+```
+
+Required fields are `issuer`, `clientId`, and `redirectUri`. Optional fields are
+`discoveryUrl`, `scopes` (default `["openid"]`), `timeoutMs` (1–300000, default
+300000), and `authorizationParams` (string values, no protocol-field overrides).
+Provider URLs require HTTPS. Unknown fields are rejected. The daemon uses managed
+interception and an allocated callback port; `--state-dir` is a startup option.
+The daemon's listening port is separate from the internal callback receiver port.
+
+The start response includes a `Location` header and a body like:
+
+```json
+{ "jobId": "<id>", "status": "pending", "pollAfterMs": 1000, "expiresInSeconds": 300 }
+```
+
+Press Enter in the daemon terminal when prompted, then finish browser sign-in.
+The timeout includes preparation and the Enter wait. Poll once a second:
+
+```sh
+curl http://127.0.0.1:43187/login/REPLACE_WITH_JOB_ID \
+  --header "Authorization: Bearer $OIDC_DAEMON_TOKEN"
+```
+
+Pending responses contain `status: "pending"` and `pollAfterMs: 1000`.
+Completed responses contain `status: "completed"` and `result`, with the same
+fields returned by module `authorize()` (including code, codeVerifier, and nonce).
+Failed responses contain `status: "failed"` and `error: { code, message }`, such as
+`TIMEOUT`, `CANCELLED`, or `AUTHORIZATION_DENIED`. Job failures are returned in an
+HTTP 200 polling response; clients must check `status` before using `result`.
+
+Only one login can be active; another start returns HTTP 409 until its cleanup
+finishes. Finished jobs remain available for repeated polling for 60 seconds,
+then return HTTP 404. Restarting the daemon discards all jobs. Up to 100 jobs are
+retained; a full store returns HTTP 409 until a result expires. Responses use
+`Cache-Control: no-store`; codes and verifiers are never logged by the daemon.
+The bridge does not exchange the code. Pass the result to the API under test.
+
+`DELETE /login/:jobId` returns HTTP 202 for a known job (including an already
+finished job) and HTTP 404 for an unknown or expired job. Cancellation leaves the
+job pending until authorization cleanup finishes. SIGINT/SIGTERM shutdown aborts
+active authorization and waits for callback-handler restoration.
+
 ## Acquire a code
 
 ```sh
-node dist/cli.js authorize \
+oidc-client-emulator authorize \
   --issuer https://identity.example.com \
   --client-id registered-client \
   --redirect-uri 'com.example.app://callback' \
@@ -121,7 +214,9 @@ node dist/cli.js authorize \
   --json
 ```
 
-The listener starts before the browser opens. Managed mode temporarily selects
+The listener starts before the browser opens. The default browser launcher waits
+for you to press Enter; the authorization timeout includes this wait. `--no-open`
+and injected `openBrowser` callbacks skip the prompt. Managed mode temporarily selects
 the helper as the scheme handler, waits for a valid response, closes the receiver,
 and restores the previous application. A valid provider error rejects immediately.
 Invalid or unsolicited callbacks do not finish the pending attempt.
@@ -208,7 +303,7 @@ effects. The CLI handles SIGINT/SIGTERM and attempts cleanup before exiting.
 node dist/cli.js intercept on --scheme com.example.app --host 127.0.0.1 --port 43119
 node dist/cli.js intercept status --scheme com.example.app
 
-node dist/cli.js authorize \
+oidc-client-emulator authorize \
   --issuer https://identity.example.com \
   --client-id registered-client \
   --redirect-uri 'com.example.app://callback' \

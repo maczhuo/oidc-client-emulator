@@ -8,6 +8,7 @@ const help = `oidc-client-emulator
     [--host 127.0.0.1] [--port 0] [--timeout-ms 300000]
     [--intercept managed|existing|none] [--no-open] [--json]
     [--discovery-url URL] [--param name=value] [--state-dir PATH]
+  daemon [--host 127.0.0.1] [--port 43187] [--state-dir PATH]
   intercept on --scheme SCHEME --port PORT [--host 127.0.0.1] [--state-dir PATH]
   intercept off --scheme SCHEME [--state-dir PATH]
   intercept status --scheme SCHEME [--state-dir PATH]
@@ -17,6 +18,8 @@ Existing mode uses an interceptor enabled with 'intercept on'. External relay mo
 (none) reads OIDC_CALLBACK_TOKEN from the environment and requires a fixed port.
 Results go to stdout. Progress goes to stderr. --no-open prints the authorization
 URL to stderr for manual use. macOS interception requires Xcode Command Line Tools.
+Daemon mode requires OIDC_DAEMON_TOKEN (32–256 base64url characters) and accepts
+authenticated POST /login, GET /login/:jobId, DELETE /login/:jobId, and GET /health.
 `;
 
 try {
@@ -34,6 +37,25 @@ try {
   };
   const numeric = (value: string | undefined, fallback: number) => value === undefined ? fallback : /^\d+$/.test(value) ? Number(value) : NaN;
   if (values.help || !positionals.length) { console.log(help); }
+  else if (positionals[0] === 'daemon' && positionals.length === 1) {
+    if (Object.keys(values).some(key => !['host', 'port', 'state-dir'].includes(key))) {
+      throw new OIDCEmulatorError('INVALID_OPTIONS', 'Daemon options are --host, --port, and --state-dir; send OIDC parameters in POST /login.');
+    }
+    const token = process.env.OIDC_DAEMON_TOKEN;
+    if (!token) throw new OIDCEmulatorError('INVALID_OPTIONS', 'Set OIDC_DAEMON_TOKEN before starting the daemon.');
+    const { startDaemon } = await import('./daemon/server.js');
+    const daemon = await startDaemon({ token, host: values.host, port: numeric(values.port, 43187), stateDir: values['state-dir'] });
+    const address = daemon.server.address();
+    console.error(`OIDC daemon listening on http://${values.host === '::1' ? '[::1]' : '127.0.0.1'}:${typeof address === 'object' && address ? address.port : 43187}`);
+    await new Promise<void>((resolve, reject) => {
+      const stop = () => {
+        daemon.close().then(resolve, reject).finally(() => {
+          process.off('SIGINT', stop); process.off('SIGTERM', stop);
+        });
+      };
+      process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    });
+  }
   else if (positionals[0] === 'intercept' && positionals.length === 2) {
     const options = { scheme: required('scheme'), stateDir: values['state-dir'] };
     switch (positionals[1]) {

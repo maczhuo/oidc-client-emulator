@@ -24,7 +24,7 @@ try {
       (metadata.token_endpoint_auth_methods_supported && !metadata.token_endpoint_auth_methods_supported.includes(method))) {
     throw new Error('Configured token endpoint authentication method is unsupported.');
   }
-  console.error('Opening your default browser. Complete sign-in with your identity provider; this check will redeem and discard the resulting tokens.');
+  console.error('Preparing authorization. Complete sign-in with your identity provider after opening the browser; this check will redeem and discard the resulting tokens.');
   const result = await authorize({ issuer, clientId, redirectUri,
     scopes: (process.env.OIDC_SCOPES ?? 'openid').split(/\s+/).filter(Boolean),
     stateDir: fileURLToPath(new URL('../.prototype/live-state', import.meta.url)),
