@@ -151,3 +151,13 @@ test('job logs show request context and lifecycle without exposing authorization
   assert.doesNotMatch(output, /secret-/);
   await jobs.close();
 });
+
+test('daemon validates and forwards optional PKCE', async t => {
+  const received = [];
+  const { request } = await fixture(t, async options => { received.push(options.pkce); return { code: 'test' }; });
+  for (const extra of [{}, { pkce: false }, { pkce: true }]) {
+    assert.equal((await request('/login', 'POST', { ...body, ...extra })).status, 202);
+  }
+  assert.deepEqual(received, [undefined, false, true]);
+  for (const pkce of ['true', 1, null]) assert.equal((await request('/login', 'POST', { ...body, pkce })).status, 400);
+});

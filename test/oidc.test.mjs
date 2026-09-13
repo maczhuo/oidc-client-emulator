@@ -96,11 +96,28 @@ test('network interface, scopes, and protected parameters are validated before b
   }
 });
 
-test('discovery rejects issuer substitution and PKCE downgrade', async t => {
-  for (const overrides of [{ issuer: 'https://wrong.example' }, { code_challenge_methods_supported: ['plain'] }]) {
-    const issuer = await provider(t, overrides);
-    await assert.rejects(discover(issuer, { allowInsecureHttp: true }), error => ['INVALID_METADATA', 'UNSUPPORTED_PROVIDER'].includes(error.code));
+test('discovery rejects issuer substitution; PKCE checks provider support only when enabled', async t => {
+  const wrong = await provider(t, { issuer: 'https://wrong.example' });
+  await assert.rejects(discover(wrong, { allowInsecureHttp: true }), { code: 'INVALID_METADATA' });
+  const issuer = await provider(t, { code_challenge_methods_supported: ['plain'] });
+  const opts = { ...await options(t), issuer };
+  await discover(issuer, { allowInsecureHttp: true });
+  for (const pkce of [undefined, true]) {
+    await assert.rejects(authorize({ ...opts, pkce }), { code: 'UNSUPPORTED_PROVIDER' });
   }
+  for (const pkce of [false]) {
+    const result = await authorize({ ...opts, pkce, openBrowser: async raw => {
+      const auth = new URL(raw);
+      assert.equal(auth.searchParams.has('code_challenge'), false);
+      assert.equal(auth.searchParams.has('code_challenge_method'), false);
+      assert.ok(auth.searchParams.get('state'));
+      assert.ok(auth.searchParams.get('nonce'));
+      await send(opts, callback(auth, { code: 'no-pkce-code' }));
+    } });
+    assert.equal(result.code, 'no-pkce-code');
+    assert.equal(Object.hasOwn(result, 'codeVerifier'), false);
+  }
+  await assert.rejects(authorize({ ...opts, pkce: 'true' }), { code: 'INVALID_OPTIONS' });
 });
 
 test('callback parser rejects destination substitution, duplicates, fragments, mixed responses, and issuer mismatch', () => {
