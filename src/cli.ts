@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
+import { secret } from './util.js';
 import { authorize, interceptOff, interceptOn, interceptStatus, OIDCEmulatorError } from './index.js';
 
 const help = `oidc-client-emulator
@@ -18,7 +19,8 @@ Existing mode uses an interceptor enabled with 'intercept on'. External relay mo
 (none) reads OIDC_CALLBACK_TOKEN from the environment and requires a fixed port.
 Results go to stdout. Progress goes to stderr. --no-open prints the authorization
 URL to stderr for manual use. macOS interception requires Xcode Command Line Tools.
-Daemon mode requires OIDC_DAEMON_TOKEN (32–256 base64url characters) and accepts
+Daemon mode generates and displays a bearer token at startup. Optionally set
+OIDC_DAEMON_TOKEN (32–256 base64url characters) to use a fixed token. It accepts
 authenticated POST /login, GET /login/:jobId, DELETE /login/:jobId, and GET /health.
 `;
 
@@ -41,12 +43,13 @@ try {
     if (Object.keys(values).some(key => !['host', 'port', 'state-dir'].includes(key))) {
       throw new OIDCEmulatorError('INVALID_OPTIONS', 'Daemon options are --host, --port, and --state-dir; send OIDC parameters in POST /login.');
     }
-    const token = process.env.OIDC_DAEMON_TOKEN;
-    if (!token) throw new OIDCEmulatorError('INVALID_OPTIONS', 'Set OIDC_DAEMON_TOKEN before starting the daemon.');
+    const configuredToken = process.env.OIDC_DAEMON_TOKEN;
+    const token = configuredToken || secret();
     const { startDaemon } = await import('./daemon/server.js');
     const daemon = await startDaemon({ token, host: values.host, port: numeric(values.port, 43187), stateDir: values['state-dir'] });
     const address = daemon.server.address();
     console.error(`OIDC daemon listening on http://${values.host === '::1' ? '[::1]' : '127.0.0.1'}:${typeof address === 'object' && address ? address.port : 43187}`);
+    if (!configuredToken) console.error(`Authorization: Bearer ${token}`);
     await new Promise<void>((resolve, reject) => {
       const stop = () => {
         daemon.close().then(resolve, reject).finally(() => {

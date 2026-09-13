@@ -103,28 +103,34 @@ test('server validates binding and token and supports clean close', async () => 
   assert.equal(daemon.server.listening, false);
 });
 
-test('daemon CLI serves HTTP and exits cleanly on SIGTERM without writing to stdout', async t => {
+for (const generated of [false, true]) {
+test(`daemon CLI authenticates with a ${generated ? 'generated' : 'configured'} token and exits cleanly`, async t => {
   const { spawn } = await import('node:child_process');
   const child = spawn(process.execPath, ['dist/cli.js', 'daemon', '--port', '0'], {
-    env: { ...process.env, OIDC_DAEMON_TOKEN: token }, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, OIDC_DAEMON_TOKEN: generated ? '' : token }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
   const exited = once(child, 'exit');
   let stdout = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
-  const url = await new Promise((resolve, reject) => {
+  const { url, bearer } = await new Promise((resolve, reject) => {
     let stderr = '';
     const timer = setTimeout(() => reject(new Error('Daemon startup timed out')), 5000);
     child.once('exit', () => { clearTimeout(timer); reject(new Error('Daemon exited before startup')); });
     child.stderr.on('data', chunk => {
       stderr += chunk;
       const match = stderr.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) { clearTimeout(timer); resolve(match[1]); }
+      const displayed = stderr.match(/Authorization: Bearer ([A-Za-z0-9_-]{43})/);
+      if (match && (!generated || displayed)) {
+        if (!generated) assert.equal(stderr.includes(token), false);
+        clearTimeout(timer); resolve({ url: match[1], bearer: generated ? displayed[1] : token });
+      }
     });
   });
-  const response = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${token}` } });
+  const response = await fetch(`${url}/health`, { headers: { Authorization: `Bearer ${bearer}` } });
   assert.equal(response.status, 200);
   child.kill('SIGTERM');
   assert.deepEqual(await exited, [0, null]);
   assert.equal(stdout, '');
 });
+}

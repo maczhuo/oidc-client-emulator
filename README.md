@@ -128,14 +128,15 @@ publishing setup, including the first-release bootstrap.
 Start it in an interactive terminal on the Mac where browser sign-in will happen:
 
 ```sh
-export OIDC_DAEMON_TOKEN="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
 oidc-client-emulator daemon --host 127.0.0.1 --port 43187
 ```
 
-Configure the same token as a Postman variable (`bridgeToken`) or in your HTTP
-client. The daemon requires `Authorization: Bearer <token>` on every endpoint,
-including health checks. It never prints the token. Tokens must contain 32–256
-base64url characters. The HTTP server binds only to `127.0.0.1` or `::1`; no
+At startup, the daemon generates a random token and displays an
+`Authorization: Bearer <token>` header in the terminal (stderr). Copy the token
+to a Postman variable (`bridgeToken`) or copy the whole header into your HTTP
+client. A new token is generated on each restart. Optionally set
+`OIDC_DAEMON_TOKEN` to use a fixed token; supplied tokens are not printed. The daemon requires `Authorization: Bearer <token>` on every endpoint,
+including health checks. Supplied tokens must contain 32–256 base64url characters. The HTTP server binds only to `127.0.0.1` or `::1`; no
 Cloudflare setup is involved. Browser-origin requests are rejected and CORS is
 not enabled. Use Postman Desktop or another HTTP client.
 
@@ -146,9 +147,10 @@ not enabled. Use Postman Desktop or another HTTP client.
 | `GET` | `/login/:jobId` | Polls pending, completed, or failed status |
 | `DELETE` | `/login/:jobId` | Requests cancellation; poll until cleanup completes |
 
-Start a login (the example assumes the token variable is available in this shell):
+Start a login from another terminal, using the token displayed by the daemon:
 
 ```sh
+export OIDC_DAEMON_TOKEN='PASTE_THE_DISPLAYED_TOKEN'
 curl --request POST http://127.0.0.1:43187/login \
   --header "Authorization: Bearer $OIDC_DAEMON_TOKEN" \
   --header 'Content-Type: application/json' \
