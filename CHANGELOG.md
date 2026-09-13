@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.2...v0.1.3) (2026-09-13)
+
+
+### Features
+
+* **tui:** introduce interactive daemon dashboard ([#5](https://github.com/maczhuo/oidc-client-emulator/issues/5)) ([f85a469](https://github.com/maczhuo/oidc-client-emulator/commit/f85a469f2ce48f5fc7ac49ec8cf957b37d841082))
+
 ## [0.1.2](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.1...v0.1.2) (2026-09-13)
 
 
