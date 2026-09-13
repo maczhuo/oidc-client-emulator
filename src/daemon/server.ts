@@ -1,3 +1,4 @@
+import type { JobUI } from './tui.js';
 import express, { type ErrorRequestHandler } from 'express';
 import { createServer } from 'node:http';
 import { equal, fail, loopback, validatePort, validateToken } from '../util.js';
@@ -41,18 +42,18 @@ export function createDaemonApp(token: string, jobs: LoginJobs, access?: AccessO
   return app;
 }
 
-export async function startDaemon(options: { token: string; host?: string; port?: number; stateDir?: string; access?: AccessOptions }) {
+export async function startDaemon(options: { token: string; host?: string; port?: number; stateDir?: string; access?: AccessOptions; ui?: JobUI }) {
   const host = options.host ?? '127.0.0.1', port = options.port ?? 43187;
   if (!loopback(host)) fail('INVALID_OPTIONS', 'Daemon host must be 127.0.0.1 or ::1.');
   validatePort(port);
-  const jobs = new LoginJobs(undefined, options.stateDir);
+  const jobs = new LoginJobs(undefined, options.stateDir, undefined, undefined, options.ui);
   const server = createServer(createDaemonApp(options.token, jobs, options.access));
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => { server.off('error', reject); resolve(); });
   });
   let closing: Promise<void> | undefined;
-  return { server, close: () => closing ??= (async () => {
+  return { server, cancelJob: (id: string) => jobs.cancel(id), close: () => closing ??= (async () => {
     const closed = new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     server.closeIdleConnections();
     await Promise.all([jobs.close(), closed]);

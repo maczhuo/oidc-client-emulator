@@ -1,3 +1,5 @@
+import { command } from '../util.js';
+import type { JobUI } from './tui.js';
 import { randomUUID } from 'node:crypto';
 import { authorize, type AuthorizationOptions, type AuthorizationResult } from '../oidc.js';
 import { OIDCEmulatorError } from '../errors.js';
@@ -10,6 +12,7 @@ interface Job {
   controller: AbortController;
   done: Promise<void>;
   startedAt: number;
+  details: { issuer: string; clientId: string; redirectUri: string; timeoutMs: number };
   expiry?: NodeJS.Timeout;
 }
 
@@ -18,9 +21,10 @@ export class LoginJobs {
   private active?: Job;
   private stopping = false;
   constructor(private run: typeof authorize = authorize, private stateDir?: string, private retentionMs = 60_000,
-    private log: (line: string) => void = line => console.error(line)) {}
+    private log: (line: string) => void = line => console.error(line), private ui?: JobUI) {}
 
   private report(job: Job, message: string) {
+    if (this.ui) { this.ui.event({ jobId: job.jobId, status: job.status, startedAt: job.startedAt, message, ...job.details }); return; }
     this.log(`[${new Date().toISOString()}] [job ${job.jobId}] ${message}`);
   }
 
@@ -28,7 +32,7 @@ export class LoginJobs {
     if (this.stopping) throw new OIDCEmulatorError('STOPPING', 'Daemon is shutting down.');
     if (this.active) throw new OIDCEmulatorError('BUSY', 'Another login is still active.');
     if (this.jobs.size >= 100) throw new OIDCEmulatorError('BUSY', 'Job capacity reached; retry after results expire.');
-    const job: Job = { jobId: randomUUID(), status: 'pending', controller: new AbortController(), done: Promise.resolve(), startedAt: Date.now() };
+    const job: Job = { jobId: randomUUID(), status: 'pending', controller: new AbortController(), done: Promise.resolve(), startedAt: Date.now(), details: { issuer: options.issuer, clientId: options.clientId, redirectUri: options.redirectUri.split(/[?#]/)[0]!, timeoutMs: options.timeoutMs ?? 300_000 } };
     this.jobs.set(job.jobId, job);
     this.active = job;
     const safeUrl = (value: string) => {
@@ -40,7 +44,16 @@ export class LoginJobs {
       redirectUri: safeUrl(options.redirectUri), scopes: options.scopes ?? ['openid'], pkce: options.pkce ?? true, timeoutMs: options.timeoutMs ?? 300_000 })}`);
     this.report(job, 'preparing: discovering provider and setting up callback interception.');
     job.done = Promise.resolve().then(() => this.run({ ...options, interception: 'managed', stateDir: this.stateDir, signal: job.controller.signal,
-      onAuthorizationUrl: () => { this.report(job, 'ready: callback listener and interceptor are ready. Press Enter below, then complete browser sign-in.'); },
+      onAuthorizationUrl: async () => {
+        this.report(job, 'ready: callback listener and interceptor are ready. Press Enter, then complete browser sign-in.');
+        if (this.ui) await this.ui.waitForEnter(job.jobId, job.controller.signal);
+      },
+      ...(this.ui ? { openBrowser: async (url: string) => {
+        job.controller.signal.throwIfAborted();
+        this.report(job, 'opening browser: complete sign-in to continue.');
+        await command('/usr/bin/open', [url]);
+        this.report(job, 'waiting for browser sign-in and callback.');
+      } } : {}),
     }))
       .then(result => {
         job.result = result; job.status = 'completed';
@@ -64,7 +77,7 @@ export class LoginJobs {
   get(id: string) {
     const job = this.jobs.get(id);
     if (!job) return undefined;
-    this.report(job, `status requested: ${job.status} (${Date.now() - job.startedAt}ms since start).`);
+    // Polling is intentionally silent so it does not bury the interactive Enter prompt.
     return { jobId: job.jobId, status: job.status, ...(job.status === 'pending' ? { pollAfterMs: 1000 } : {}),
       ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) };
   }

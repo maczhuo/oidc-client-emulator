@@ -124,6 +124,21 @@ publishing setup, including the first-release bootstrap.
 
 ## Run the HTTP daemon
 
+In an interactive terminal, the daemon shows a dashboard with a fixed job summary,
+Enter prompt, countdown, and scrollable event history. Access configuration and
+the generated bearer token are displayed too.
+
+- **Enter:** open the browser when ready.
+- **c:** cancel the current job.
+- **q / Ctrl+C:** shut down and wait for cleanup.
+- **Up/Down:** scroll recent events (up to 100 retained).
+
+Use `--no-tui` for plain logs. Plain logs are also selected when stdin, stdout,
+or stderr is redirected, or `TERM=dumb`. Polling is silent in either mode.
+The terminal screen and input mode are restored on exit. Cloudflare Access flags
+and per-request `pkce` settings work in both modes.
+
+
 Start it in an interactive terminal on the Mac where browser sign-in will happen:
 
 ```sh
@@ -178,7 +193,7 @@ The start response includes a `Location` header and a body like:
 
 Press Enter in the daemon terminal when prompted, then finish browser sign-in.
 The terminal logs timestamped job IDs, issuer/client/redirect/scopes, preparation,
-readiness for browser sign-in, polling status, completion or failure, cancellation,
+readiness for browser sign-in, completion or failure, cancellation,
 and result expiry. Lifecycle logs go to stderr and include elapsed time. They omit
 authorization URLs, URL query strings, extra authorization parameters, codes,
 verifiers, and nonces.

@@ -147,7 +147,7 @@ test('job logs show request context and lifecycle without exposing authorization
   assert.equal(jobs.get(jobId).status, 'completed');
   await delay(30);
   const output = logs.join('\n');
-  for (const expected of [jobId, body.issuer, body.clientId, 'pending:', 'preparing:', 'ready:', 'completed:', 'status requested: completed', 'expired:']) assert.ok(output.includes(expected), expected);
+  for (const expected of [jobId, body.issuer, body.clientId, 'pending:', 'preparing:', 'ready:', 'completed:', 'expired:']) assert.ok(output.includes(expected), expected);
   assert.doesNotMatch(output, /secret-/);
   await jobs.close();
 });
