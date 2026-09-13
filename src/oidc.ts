@@ -55,10 +55,23 @@ function providerURL(value: string, insecure: boolean): URL {
   return url;
 }
 
+const discoveryCache = new Map<string, { metadata: ProviderMetadata; expiresAt: number }>();
+const discoveryCacheTtlMs = 300_000;
+const discoveryCacheMaxEntries = 100;
+
 export async function discover(issuer: string, options: { discoveryUrl?: string; allowInsecureHttp?: boolean; signal?: AbortSignal } = {}): Promise<ProviderMetadata> {
+  options.signal?.throwIfAborted();
   const issuerURL = providerURL(issuer, !!options.allowInsecureHttp);
   if (issuerURL.search) fail('INVALID_OPTIONS', 'Issuer cannot contain a query.');
   const url = providerURL(options.discoveryUrl ?? `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`, !!options.allowInsecureHttp);
+  // Keep insecure local-test metadata separate from normal HTTPS-only discovery.
+  const cacheKey = JSON.stringify([issuer, url.href, !!options.allowInsecureHttp]);
+  const now = Date.now();
+  for (const [key, entry] of discoveryCache) {
+    if (entry.expiresAt <= now) discoveryCache.delete(key);
+  }
+  const cached = discoveryCache.get(cacheKey);
+  if (cached) return structuredClone(cached.metadata);
   let metadata: ProviderMetadata;
   try {
     const response = await fetch(url, { signal: options.signal, redirect: 'error', headers: { Accept: 'application/json' } });
@@ -94,6 +107,9 @@ export async function discover(issuer: string, options: { discoveryUrl?: string;
   if (metadata.response_modes_supported && !metadata.response_modes_supported.includes('query')) fail('UNSUPPORTED_PROVIDER', 'This version requires query authorization responses.');
   if (metadata.code_challenge_methods_supported && !metadata.code_challenge_methods_supported.includes('S256')) fail('UNSUPPORTED_PROVIDER', 'Provider does not advertise PKCE S256; no downgrade is allowed.');
   if (metadata.require_pushed_authorization_requests) fail('UNSUPPORTED_PROVIDER', 'Required pushed authorization requests are not supported in this version.');
+  options.signal?.throwIfAborted();
+  if (discoveryCache.size >= discoveryCacheMaxEntries) discoveryCache.delete(discoveryCache.keys().next().value!);
+  discoveryCache.set(cacheKey, { metadata: structuredClone(metadata), expiresAt: Date.now() + discoveryCacheTtlMs });
   return metadata;
 }
 
@@ -191,7 +207,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
       signal.throwIfAborted();
       if (options.onAuthorizationUrl) await Promise.race([Promise.resolve().then(() => options.onAuthorizationUrl!(authURL.href)), interrupted]);
       const opener = options.openBrowser;
-      if (opener !== false) await Promise.race([Promise.resolve().then(() => (opener ?? openDefaultBrowser)(authURL.href)), interrupted]);
+      if (opener !== false) await Promise.race([Promise.resolve().then(() => opener ? opener(authURL.href) : openDefaultBrowser(authURL.href, signal)), interrupted]);
       const code = await receiver.result;
       return { code, codeVerifier, state, nonce, redirectUri: options.redirectUri, issuer: options.issuer,
         tokenEndpoint: provider.token_endpoint, receivedAt: new Date().toISOString() };
