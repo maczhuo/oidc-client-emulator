@@ -134,3 +134,20 @@ test(`daemon CLI authenticates with a ${generated ? 'generated' : 'configured'} 
   assert.equal(stdout, '');
 });
 }
+
+test('job logs show request context and lifecycle without exposing authorization secrets', async () => {
+  const logs = [];
+  const jobs = new LoginJobs(async options => {
+    await options.onAuthorizationUrl('https://identity.example/authorize?state=secret-state');
+    return { code: 'secret-code', codeVerifier: 'secret-verifier', nonce: 'secret-nonce' };
+  }, undefined, 20, line => logs.push(line));
+  const { jobId } = jobs.start({ ...body, redirectUri: `${body.redirectUri}?private=secret-query`, timeoutMs: 300000,
+    authorizationParams: { login_hint: 'secret-login-hint' } });
+  await delay(0);
+  assert.equal(jobs.get(jobId).status, 'completed');
+  await delay(30);
+  const output = logs.join('\n');
+  for (const expected of [jobId, body.issuer, body.clientId, 'pending:', 'preparing:', 'ready:', 'completed:', 'status requested: completed', 'expired:']) assert.ok(output.includes(expected), expected);
+  assert.doesNotMatch(output, /secret-/);
+  await jobs.close();
+});

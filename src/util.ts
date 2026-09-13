@@ -38,7 +38,7 @@ export async function openDefaultBrowser(url: string, signal?: AbortSignal): Pro
       input.once('close', () => reject(signal?.reason ?? new OIDCEmulatorError('CANCELLED', 'Input closed before browser opening.')));
       input.once('SIGINT', () => reject(new OIDCEmulatorError('CANCELLED', 'Authorization cancelled.')));
       signal?.addEventListener('abort', cancel, { once: true });
-      process.stderr.write('Press Enter to open your default browser.');
+      process.stderr.write('Press Enter to open your default browser.\n');
     });
   } finally {
     signal?.removeEventListener('abort', cancel);

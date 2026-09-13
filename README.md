@@ -178,6 +178,11 @@ The start response includes a `Location` header and a body like:
 ```
 
 Press Enter in the daemon terminal when prompted, then finish browser sign-in.
+The terminal logs timestamped job IDs, issuer/client/redirect/scopes, preparation,
+readiness for browser sign-in, polling status, completion or failure, cancellation,
+and result expiry. Lifecycle logs go to stderr and include elapsed time. They omit
+authorization URLs, URL query strings, extra authorization parameters, codes,
+verifiers, and nonces.
 The timeout includes preparation and the Enter wait. Poll once a second:
 
 ```sh
