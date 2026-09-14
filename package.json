@@ -1,6 +1,6 @@
 {
   "name": "@jzhuo3/oidc-client-emulator",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Acquire OIDC authorization codes and temporarily forward macOS custom URL schemes.",
   "type": "module",
   "engines": {

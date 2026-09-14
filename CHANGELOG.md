@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.3...v0.1.4) (2026-09-14)
+
+
+### Features
+
+* handle module authorization signals and make browser prompts opt-in ([#7](https://github.com/maczhuo/oidc-client-emulator/issues/7)) ([e785c0b](https://github.com/maczhuo/oidc-client-emulator/commit/e785c0bbe86133f6bac094941b553dbbff3ee4c5))
+
 ## [0.1.3](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.2...v0.1.3) (2026-09-13)
 
 
