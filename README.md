@@ -126,18 +126,24 @@ publishing setup, including the first-release bootstrap.
 
 In an interactive terminal, the daemon shows a dashboard with a fixed job summary,
 Enter prompt, countdown, and scrollable event history. Access configuration and
-the generated bearer token are displayed too.
+the generated bearer token are displayed too. The dashboard uses
+[Ink](https://github.com/vadimdemedes/ink) for incremental rendering, so unchanged
+text is not repainted on every countdown tick.
 
 - **Enter:** open the browser when ready.
 - **c:** cancel the current job.
 - **q / Ctrl+C:** shut down and wait for cleanup.
-- **Up/Down:** scroll recent events (up to 100 retained).
+- **Page Up/Page Down:** scroll recent events (up to 100 retained).
+- **Home/End:** jump to oldest events / resume following the latest events.
+
+Mouse capture is disabled so you can select and copy the token normally.
+Up/Down keys are ignored, including trackpad gestures translated into arrow keys
+by macOS terminals. New events do not move the history while you are reading it.
 
 Use `--no-tui` for plain logs. Plain logs are also selected when stdin, stdout,
 or stderr is redirected, or `TERM=dumb`. Polling is silent in either mode.
 The terminal screen and input mode are restored on exit. Cloudflare Access flags
 and per-request `pkce` settings work in both modes.
-
 
 Start it in an interactive terminal on the Mac where browser sign-in will happen:
 
@@ -273,7 +279,6 @@ PKCE S256 is enabled by default. To disable it, pass `--no-pkce` to `authorize`,
 from the result. Enable PKCE when your provider/client registration requires it.
 State and nonce are generated and checked independently of this setting.
 
-
 ```sh
 oidc-client-emulator authorize \
   --issuer https://identity.example.com \
@@ -379,8 +384,9 @@ instead of the macOS default. `onAuthorizationUrl` runs once the receiver and
 handler are ready, before browser opening. Use `openBrowser: false` when the hook
 handles navigation. The browser's custom-scheme dispatch still needs macOS.
 
-The library installs no process-wide signal handlers and has no import-time side
-effects. The CLI handles SIGINT/SIGTERM and attempts cleanup before exiting.
+Importing the library has no side effects; signal listeners are installed only
+while `authorize()` is active. The CLI handles SIGINT/SIGTERM and attempts cleanup
+before exiting.
 
 ## Persistent on/off switch
 
