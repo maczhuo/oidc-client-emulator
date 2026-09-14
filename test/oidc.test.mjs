@@ -148,3 +148,34 @@ test('oversized and malformed callback bodies are rejected without settling the 
   } });
   assert.equal(result.code, 'valid');
 });
+
+test('module signal handlers cancel active authorization, close the receiver, and preserve host handlers', async t => {
+  for (const name of ['SIGINT', 'SIGTERM']) {
+    const opts = await options(t);
+    let hostCalls = 0;
+    const host = () => { hostCalls++; };
+    process.on(name, host);
+    const counts = ['SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal));
+    try {
+      await assert.rejects(authorize({ ...opts, openBrowser: () => {
+        process.emit(name);
+        return new Promise(() => {});
+      } }), { code: 'CANCELLED' });
+      assert.equal(hostCalls, 1);
+      assert.ok(process.listeners(name).includes(host));
+      assert.deepEqual(['SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal)), counts);
+      await assert.rejects(fetch(`http://127.0.0.1:${opts.callback.port}/callback`));
+    } finally { process.off(name, host); }
+  }
+});
+
+test('module signal handling can be disabled and timeout removes default handlers', async t => {
+  const counts = ['SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal));
+  const opts = await options(t);
+  await assert.rejects(authorize({ ...opts, handleSignals: false, timeoutMs: 30, openBrowser: () => {
+    assert.deepEqual(['SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal)), counts);
+    return new Promise(() => {});
+  } }), { code: 'TIMEOUT' });
+  await assert.rejects(authorize({ ...opts, timeoutMs: 30, openBrowser: () => new Promise(() => {}) }), { code: 'TIMEOUT' });
+  assert.deepEqual(['SIGINT', 'SIGTERM'].map(signal => process.listenerCount(signal)), counts);
+});

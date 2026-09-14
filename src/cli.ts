@@ -108,6 +108,8 @@ try {
         timeoutMs: numeric(values['timeout-ms'], 300_000), stateDir: values['state-dir'],
         interception: (values.intercept ?? 'managed') as 'managed' | 'existing' | 'none',
         pkce: !values['no-pkce'], authorizationParams: params, signal: controller.signal,
+        handleSignals: false, // CLI owns process shutdown.
+        promptBeforeBrowser: true,
         openBrowser: values['no-open'] ? false : undefined,
         onAuthorizationUrl: values['no-open'] ? url => { console.error(url); } : undefined,
       });

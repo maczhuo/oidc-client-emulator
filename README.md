@@ -284,7 +284,7 @@ oidc-client-emulator authorize \
   --json
 ```
 
-The listener starts before the browser opens. The default browser launcher waits
+The listener starts before the browser opens. In CLI and daemon modes, the browser launcher waits
 for you to press Enter; the authorization timeout includes this wait. `--no-open`
 and injected `openBrowser` callbacks skip the prompt. Managed mode temporarily selects
 the helper as the scheme handler, waits for a valid response, closes the receiver,
@@ -361,6 +361,18 @@ const result = await authorize({
 
 // Pass result.code, result.codeVerifier, and result.redirectUri to your token test.
 ```
+
+While module `authorize()` is active, it installs shared SIGINT/SIGTERM listeners.
+Either signal cancels active authorizations; each promise rejects with `CANCELLED`
+after callback/interceptor cleanup finishes. The listeners are removed when all
+calls finish, and existing application listeners are preserved. The module does
+not force process exit or set an exit code. Catch the rejection in your application
+and let cleanup finish; a host listener that calls `process.exit()` immediately
+can still interrupt it. Set `handleSignals: false` if your application handles
+signals itself. SIGKILL and abrupt crashes cannot run cleanup.
+
+Module `authorize()` opens the default browser immediately without reading stdin.
+Set `promptBeforeBrowser: true` only if you want an Enter prompt in a module call.
 
 Supply `openBrowser: async url => { … }` to drive your testing framework's browser
 instead of the macOS default. `onAuthorizationUrl` runs once the receiver and
