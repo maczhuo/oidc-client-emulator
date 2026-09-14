@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.4...v0.1.5) (2026-09-14)
+
+
+### Features
+
+* migrate daemon dashboard to Ink ([#9](https://github.com/maczhuo/oidc-client-emulator/issues/9)) ([91e396f](https://github.com/maczhuo/oidc-client-emulator/commit/91e396ffc8a9057ecb8fa4d2b6f32d6fb76ef680))
+
 ## [0.1.4](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.3...v0.1.4) (2026-09-14)
 
 
