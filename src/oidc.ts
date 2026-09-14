@@ -1,3 +1,4 @@
+import { registerAuthorizationSignals } from './signals.js';
 import { createHash } from 'node:crypto';
 import { AuthorizationResponseError, OIDCEmulatorError } from './errors.js';
 import { listen } from './receiver.js';
@@ -18,6 +19,10 @@ export interface AuthorizationOptions {
   stateDir?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Cancel on SIGINT/SIGTERM while active. Defaults to true. */
+  handleSignals?: boolean;
+  /** Wait for Enter before the default browser opens. CLI-only by default. */
+  promptBeforeBrowser?: boolean;
   openBrowser?: false | ((url: string) => void | Promise<void>);
   onAuthorizationUrl?: (url: string) => void | Promise<void>;
   authorizationParams?: Record<string, string>;
@@ -144,6 +149,7 @@ export function parseResponse(raw: string, expected: { redirectUri: string; stat
 export async function authorize(options: AuthorizationOptions): Promise<AuthorizationResult> {
   if (typeof options.clientId !== 'string' || !options.clientId.trim()) fail('INVALID_OPTIONS', 'clientId is required.');
   if (options.pkce !== undefined && typeof options.pkce !== 'boolean') fail('INVALID_OPTIONS', 'pkce must be a boolean.');
+  if (options.handleSignals !== undefined && typeof options.handleSignals !== 'boolean') fail('INVALID_OPTIONS', 'handleSignals must be a boolean.');
   const scopes = options.scopes ?? ['openid'];
   if (!Array.isArray(scopes) || !scopes.includes('openid') || scopes.some(scope => typeof scope !== 'string' || !/^[\x21\x23-\x5b\x5d-\x7e]+$/.test(scope))) fail('INVALID_OPTIONS', 'Scopes must contain openid and consist of nonempty OAuth scope tokens.');
   let redirect: URL;
@@ -166,6 +172,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
   }
   const abort = new AbortController();
   const cancel = () => abort.abort(new OIDCEmulatorError('CANCELLED', 'Authorization cancelled.'));
+  const removeSignalHandlers = options.handleSignals === false ? () => {} : registerAuthorizationSignals(cancel);
   options.signal?.addEventListener('abort', cancel, { once: true });
   if (options.signal?.aborted) cancel();
   const timer = setTimeout(() => abort.abort(new OIDCEmulatorError('TIMEOUT', 'Authorization timed out.')), timeoutMs);
@@ -215,7 +222,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
       signal.throwIfAborted();
       if (options.onAuthorizationUrl) await Promise.race([Promise.resolve().then(() => options.onAuthorizationUrl!(authURL.href)), interrupted]);
       const opener = options.openBrowser;
-      if (opener !== false) await Promise.race([Promise.resolve().then(() => opener ? opener(authURL.href) : openDefaultBrowser(authURL.href, signal)), interrupted]);
+      if (opener !== false) await Promise.race([Promise.resolve().then(() => opener ? opener(authURL.href) : openDefaultBrowser(authURL.href, signal, options.promptBeforeBrowser === true)), interrupted]);
       const code = await receiver.result;
       return { code, ...(codeVerifier ? { codeVerifier } : {}), state, nonce, redirectUri: options.redirectUri, issuer: options.issuer,
         tokenEndpoint: provider.token_endpoint, receivedAt: new Date().toISOString() };
@@ -231,6 +238,7 @@ export async function authorize(options: AuthorizationOptions): Promise<Authoriz
     return mode === 'none' ? await run() : await withSchemeLease(scheme, options.stateDir, run);
   } finally {
     clearTimeout(timer);
+    removeSignalHandlers();
     options.signal?.removeEventListener('abort', cancel);
   }
 }

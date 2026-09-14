@@ -43,7 +43,7 @@ export class LoginJobs {
     this.report(job, `pending: request accepted ${JSON.stringify({ issuer: safeUrl(options.issuer), clientId: options.clientId,
       redirectUri: safeUrl(options.redirectUri), scopes: options.scopes ?? ['openid'], pkce: options.pkce ?? true, timeoutMs: options.timeoutMs ?? 300_000 })}`);
     this.report(job, 'preparing: discovering provider and setting up callback interception.');
-    job.done = Promise.resolve().then(() => this.run({ ...options, interception: 'managed', stateDir: this.stateDir, signal: job.controller.signal,
+    job.done = Promise.resolve().then(() => this.run({ ...options, interception: 'managed', handleSignals: false, promptBeforeBrowser: !this.ui, stateDir: this.stateDir, signal: job.controller.signal,
       onAuthorizationUrl: async () => {
         this.report(job, 'ready: callback listener and interceptor are ready. Press Enter, then complete browser sign-in.');
         if (this.ui) await this.ui.waitForEnter(job.jobId, job.controller.signal);

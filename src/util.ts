@@ -27,9 +27,10 @@ export async function command(file: string, args: string[]): Promise<string> {
   try { return (await execute(file, args, { timeout: 60_000, maxBuffer: 1024 * 1024 })).stdout; }
   catch { return fail('NATIVE_COMMAND_FAILED', `${file.split('/').at(-1)} failed. Check macOS consent and Xcode Command Line Tools; arguments are suppressed.`); }
 }
-export async function openDefaultBrowser(url: string, signal?: AbortSignal): Promise<void> {
+export async function openDefaultBrowser(url: string, signal?: AbortSignal, prompt = false): Promise<void> {
   if (process.platform !== 'darwin') fail('UNSUPPORTED_PLATFORM', 'Default browser opening requires macOS; inject openBrowser on other platforms.');
   signal?.throwIfAborted();
+  if (!prompt) { await command('/usr/bin/open', [url]); return; }
   const input = createInterface({ input: process.stdin, output: process.stderr });
   const cancel = () => input.close();
   try {
