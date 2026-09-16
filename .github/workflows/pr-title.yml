@@ -1,0 +1,29 @@
+name: PR title
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+# Validate metadata only. Never check out or execute PR code in this workflow.
+permissions: {}
+
+jobs:
+  validate:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a Conventional Commits title
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { pull_request: pr } = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const pattern = /^(feat|fix|perf|revert|docs|style|refactor|test|build|ci|chore)(\([^()\r\n]+\))?!?: [^\s].*$/u;
+          if (!pattern.test(pr.title) || /[\r\n]/u.test(pr.title)) {
+            console.error('::error::Use a Conventional Commits PR title, for example: feat(tui): highlight pending browser requests. Use feat for features, fix for bug fixes, and docs/chore/ci for the corresponding maintenance changes.');
+            process.exit(1);
+          }
+          console.log('PR title follows Conventional Commits.');
+          NODE
