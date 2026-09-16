@@ -13,12 +13,16 @@ export interface JobUI {
 }
 const clean = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 
-function Dashboard({ lines, width, onInput }: {
-  lines: string[]; width: number; onInput: (input: string, key: Key) => void;
+function Dashboard({ lines, width, onInput, alertLine, alertBright }: {
+  lines: string[]; width: number; alertLine: number; alertBright: boolean; onInput: (input: string, key: Key) => void;
 }) {
   useInput(onInput);
   return createElement(Box, { flexDirection: 'column', width },
-    ...lines.map((line, index) => createElement(Text, { key: index, wrap: 'truncate-end' }, line || ' ')));
+    ...lines.map((line, index) => createElement(Text, {
+      key: index, wrap: 'truncate-end',
+      ...(index === alertLine ? { bold: true, color: alertBright ? 'whiteBright' : 'redBright',
+        backgroundColor: alertBright ? 'red' : undefined } : {}),
+    }, line || ' ')));
 }
 
 export class DaemonTUI implements JobUI {
@@ -29,6 +33,7 @@ export class DaemonTUI implements JobUI {
   private historyRows = 1;
   private pending?: { jobId: string; resolve(): void; reject(error: Error): void };
   private timer?: NodeJS.Timeout;
+  private alertBright = true;
   private stopped = false;
   private quitting = false;
   private wasRaw = false;
@@ -50,6 +55,7 @@ export class DaemonTUI implements JobUI {
 
   waitForEnter(jobId: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
+    this.alertBright = true;
     return new Promise<void>((resolve, reject) => {
       const abort = () => this.rejectPrompt();
       const finish = () => { signal.removeEventListener('abort', abort); this.pending = undefined; };
@@ -90,7 +96,7 @@ export class DaemonTUI implements JobUI {
       interactive: true,
     });
     this.output.on('resize', this.resize);
-    this.timer = setInterval(() => this.render(), 1000).unref();
+    this.timer = setInterval(() => { this.alertBright = !this.alertBright; this.render(); }, 1000).unref();
   }
 
   private view() {
@@ -98,9 +104,12 @@ export class DaemonTUI implements JobUI {
     const job = this.current;
     const left = job ? Math.max(0, Math.ceil((job.timeoutMs - (Date.now() - job.startedAt)) / 1000)) : 0;
     const status = this.quitting ? 'Shutting down; waiting for cleanup' : this.pending ? 'Waiting for Enter' : (job ? `${job.status}: ${job.message.split(':')[0]}` : 'Idle; waiting for a request');
-    const lines = [`OIDC Emulator | ${this.address}`, `Status: ${status}`, this.pending ? '>>> Press Enter to open browser <<<' : 'Enter: open browser   c: cancel   q: quit', ''];
+    const needsBrowser = !!this.pending && !this.quitting;
+    const lines = [`OIDC Emulator | ${this.address}`, `Status: ${status}`, 'Enter: open browser   c: cancel   q: quit', ''];
     if (this.access) lines.push(`Access: ${this.access.teamDomain}`, `Audience: ${this.access.audience}`, '');
     if (this.token) lines.push(`Authorization: Bearer ${this.token}`, '');
+    const alertLine = lines.length;
+    if (needsBrowser) lines.push('>>> Press Enter to open browser <<< NEW REQUEST');
     if (job) lines.push(`Job: ${job.jobId}`, `Issuer: ${job.issuer}`, `Client: ${job.clientId}`, `Redirect: ${job.redirectUri}`,
       job.status === 'pending' ? `Remaining: ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : `Result: GET /login/${job.jobId}`, '');
     const summary = lines.slice(0, Math.max(3, height - 3));
@@ -113,6 +122,7 @@ export class DaemonTUI implements JobUI {
       `PgUp/PgDn: history  Home/End: oldest/latest | ${this.scroll === 0 ? 'Following' : 'History paused'}`];
     return createElement(Dashboard, {
       lines: frame.slice(0, height).map(clean),
+      alertLine: needsBrowser && alertLine < summary.length ? alertLine : -1, alertBright: this.alertBright,
       width: Math.max(1, (this.output.columns || 80) - 1), onInput: this.key,
     });
   }
