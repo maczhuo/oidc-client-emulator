@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.6](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.5...v0.1.6) (2026-09-16)
+
+
+### Features
+
+* **ci:** skip tests when no application changes detected ([#14](https://github.com/maczhuo/oidc-client-emulator/issues/14)) ([aebf708](https://github.com/maczhuo/oidc-client-emulator/commit/aebf708005f18d56fa86faf3458c26a6807a9eeb))
+* **tui:** highlight pending browser requests in job info ([d76af45](https://github.com/maczhuo/oidc-client-emulator/commit/d76af456ebc9dba75e6783d470c7c5dc46a3f9f0))
+
 ## [0.1.5](https://github.com/maczhuo/oidc-client-emulator/compare/v0.1.4...v0.1.5) (2026-09-14)
 
 
