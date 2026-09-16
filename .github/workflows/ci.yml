@@ -15,8 +15,28 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Determine verification scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_tests: ${{ steps.scope.outputs.run_tests }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect application changes
+        id: scope
+        env:
+          VERIFY_REF: ${{ inputs.ref }}
+        run: node scripts/ci-changes.mjs
+
   test:
     name: Test (Linux, Node ${{ matrix.node }})
+    needs: changes
+    if: needs.changes.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -39,12 +59,21 @@ jobs:
 
   verify:
     name: Verify complete
-    needs: test
+    needs: [changes, test]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every matrix job to pass
+      - name: Require successful tests or an intentional skip
         env:
+          SCOPE_RESULT: ${{ needs.changes.result }}
+          RUN_TESTS: ${{ needs.changes.outputs.run_tests }}
           RESULT: ${{ needs.test.result }}
-        run: test "$RESULT" = success
+        run: |
+          test "$SCOPE_RESULT" = success
+          if [ "$RUN_TESTS" = true ]; then
+            test "$RESULT" = success
+          else
+            test "$RUN_TESTS" = false
+            test "$RESULT" = skipped
+          fi
