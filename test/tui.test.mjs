@@ -34,6 +34,27 @@ function fixture() {
 const event = { jobId: 'job-123', status: 'pending', startedAt: Date.now(), timeoutMs: 300000,
   issuer: 'https://example.com', clientId: 'client', redirectUri: 'example:/callback', message: 'ready: press Enter' };
 
+test('Ink pulses the browser alert above job info only while Enter is required', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const f = fixture(); f.tui.start();
+  try {
+    f.tui.event(event);
+    assert.equal(f.tui.view().props.alertLine, -1);
+    const wait = f.tui.waitForEnter(event.jobId, new AbortController().signal);
+    void wait.catch(() => {});
+    await f.flush();
+    assert.match(f.screen(), />>> Press Enter to open browser <<< NEW REQUEST\nJob: job-123/);
+    assert.equal(f.tui.view().props.alertBright, true);
+    t.mock.timers.tick(1000);
+    await f.flush();
+    assert.equal(f.tui.view().props.alertBright, false);
+    assert.match(f.screen(), /NEW REQUEST\nJob: job-123/);
+    await f.key('\r'); await wait;
+    assert.equal(f.tui.view().props.alertLine, -1);
+    assert.doesNotMatch(f.screen(), /NEW REQUEST|>>>/);
+  } finally { await f.stop(); }
+});
+
 test('Ink keeps prompt visible through events and resize, handles actions and restores terminal', async () => {
   const f = fixture(); f.tui.start();
   try {
@@ -44,7 +65,7 @@ test('Ink keeps prompt visible through events and resize, handles actions and re
     await f.flush();
     assert.match(f.screen(), /Press Enter to open browser/);
     assert.match(f.screen(), /Authorization: Bearer test-token/);
-    f.output.columns = 40; f.output.rows = 8; f.terminal.resize(40, 8); f.output.emit('resize');
+    f.output.columns = 40; f.output.rows = 12; f.terminal.resize(40, 12); f.output.emit('resize');
     await f.flush();
     assert.match(f.screen(), /Press Enter/);
     await f.key('\r'); await wait;
